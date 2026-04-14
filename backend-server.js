@@ -3,23 +3,42 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import mapHandler from './api/map.js';
-import ipinfoHandler from './api/ipinfo.js';
-import ipapicomHandler from './api/ipapicom.js';
-import keycdnHandler from './api/keycdn.js';
-import ipCheckingHandler from './api/ipchecking.js';
-import ipsbHandler from './api/ipsb.js';
-import cfHander from './api/cfradar.js';
-import validateConfigs from './api/configs.js';
-import dnsResolver from './api/dnsresolver.js';
-import rateLimit from 'express-rate-limit';
 import { slowDown } from 'express-slow-down'
-import whois from './api/whois.js';
-import ipapiisHandler from './api/ipapiis.js';
-import invisibilitytestHandler from './api/invisibilitytest.js';
-import macChecker from './api/macchecker.js';
+import rateLimit from 'express-rate-limit';
+
+// Backend APIs
+import mapHandler from './api/google-map.js';
+// IP Info
+import ipinfoHandler from './api/ipinfo-io.js';
+import ipapicomHandler from './api/ipapi-com.js';
+import ipCheckingHandler from './api/ipcheck-ing.js';
+import ipapiisHandler from './api/ipapi-is.js';
+import ip2locationHandler from './api/ip2location-io.js';
+import ipsbHandler from './api/ip-sb.js';
+import maxmindHandler from './api/maxmind.js';
+// Others
+import cfHander from './api/cf-radar.js';
+import dnsResolver from './api/dns-resolver.js';
+import getWhois from './api/get-whois.js';
+import invisibilitytestHandler from './api/invisibility-test.js';
+import macChecker from './api/mac-checker.js';
+// User
+import validateConfigs from './api/configs.js';
+import getUserinfo from './api/get-user-info.js';
+import updateUserAchievement from './api/update-user-achievement.js';
+import { reloadMaxMindDatabases, startMaxMindFileWatcher } from './common/maxmind-service.js';
+import { startMaxMindAutoUpdate } from './common/maxmind-updater.js';
 
 dotenv.config();
+
+// Load the bundled MaxMind databases during startup without blocking the server boot.
+reloadMaxMindDatabases('startup').catch(() => {
+    console.error('MaxMind API will return 503 until databases are loaded successfully');
+});
+// Watch database file changes so pm2 or another process can publish updates safely.
+startMaxMindFileWatcher();
+// Schedule credential-gated MaxMind updates when MAXMIND_AUTO_UPDATE is enabled.
+startMaxMindAutoUpdate({ reload: reloadMaxMindDatabases });
 
 const app = express();
 const backEndPort = parseInt(process.env.BACKEND_PORT || 11966, 10);
@@ -29,7 +48,7 @@ const speedLimitSet = parseInt(process.env.SECURITY_DELAY_AFTER || 0, 10);
 
 app.set('trust proxy', 1);
 
-// 获取客户端 IP 的辅助函数
+// 获取客户端 IP 的辅助函数。
 function getClientIp(req) {
     const cfIp = req.headers['cf-connecting-ip']; // Cloudflare IP
     const forwardedIps = req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0] : null;
@@ -37,11 +56,12 @@ function getClientIp(req) {
     return cfIp || forwardedIps || cfIpV6 || req.ip;
 }
 
-// 记录限流触发的 IP 地址
+// 将时间戳格式化为限流日志使用的上海时区时间。
 function formatDate(timestamp) {
     return new Date(timestamp).toLocaleString('en-US', { timeZone: 'Asia/Shanghai' });
 }
 
+// 将触发限流的 IP 写入日志，并累计同一个 IP 被限制的次数。
 function logLimitedIP(ip) {
     const logPath = path.join(__dirname, blackListIPLogFilePath);
 
@@ -96,6 +116,7 @@ const rateLimiter = rateLimit({
     windowMs: 20 * 60 * 1000,
     max: rateLimitSet,
     message: 'Too Many Requests',
+    // 处理超过限流阈值的请求，并按需记录触发限流的 IP。
     handler: (req, res, next) => {
         const ip = getClientIp(req);
         if (req.rateLimit.current === req.rateLimit.limit + 1 && blackListIPLogFilePath) {
@@ -108,6 +129,7 @@ const rateLimiter = rateLimit({
 const speedLimiter = slowDown({
 	windowMs: 60 * 60 * 1000,
 	delayAfter: speedLimitSet,
+    // 根据命中次数逐步增加响应延迟。
 	delayMs: (hits) => hits * 400,
 })
 
@@ -123,20 +145,24 @@ if (speedLimitSet !== 0) {
     console.log('Speed limiter is enabled, slowing down after:', speedLimitSet, 'requests');
 }
 
+app.use(express.json());
 
 // APIs
 app.get('/api/map', mapHandler);
 app.get('/api/ipinfo', ipinfoHandler);
 app.get('/api/ipapicom', ipapicomHandler);
-app.get('/api/keycdn', keycdnHandler);
 app.get('/api/ipchecking', ipCheckingHandler);
 app.get('/api/ipsb', ipsbHandler);
 app.get('/api/cfradar', cfHander);
 app.get('/api/dnsresolver', dnsResolver);
-app.get('/api/whois', whois);
+app.get('/api/whois', getWhois);
 app.get('/api/ipapiis', ipapiisHandler);
+app.get('/api/ip2location', ip2locationHandler);
 app.get('/api/invisibility', invisibilitytestHandler);
 app.get('/api/macchecker', macChecker);
+app.get('/api/maxmind', maxmindHandler);
+app.get('/api/getuserinfo', getUserinfo);
+app.put('/api/updateuserachievement', updateUserAchievement);
 
 // 使用查询参数处理所有配置请求
 app.get('/api/configs', validateConfigs);
@@ -149,5 +175,6 @@ app.use(express.static(path.join(__dirname, './dist')));
 
 // 启动服务器
 app.listen(backEndPort, () => {
+    // 输出监听地址，便于本地运行和进程管理器日志排查。
     console.log(`Backend server running on http://localhost:${backEndPort}`);
 });

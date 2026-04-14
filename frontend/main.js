@@ -6,6 +6,7 @@ import i18n from './locales/i18n';
 import router from './router';
 import 'bootstrap';
 import { analytics } from './utils/use-analytics';
+import { registerServiceWorker } from './utils/register-service-worker';
 
 import { Tooltip } from 'bootstrap';
 import { detectOS } from './utils/system-detect';
@@ -39,10 +40,10 @@ handleResize();
 // 监听窗口大小变化
 window.addEventListener('resize', handleResize);
 
-
 // 启动 Google Analytics
 analytics.page();
 app.config.globalProperties.$analytics = analytics;
+registerServiceWorker();
 
 // 注册全局事件跟踪函数，改造完程序后移除
 app.config.globalProperties.$trackEvent = function (category, action, label) {
@@ -81,8 +82,12 @@ app.directive('tooltip', {
     }
 })
 
+// 检查 Firebase 环境
+store.checkFirebaseEnv();
+
 // 获取后端配置和用户偏好
 Promise.all([
+    store.isFireBaseSet ? store.initializeAuthListener() : Promise.resolve(),
     store.loadPreferences(), // 加载用户偏好设置
     store.fetchConfigs()      // 获取后端配置
 ]).then(() => {

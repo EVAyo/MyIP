@@ -1,13 +1,69 @@
 import dotenv, { parse } from 'dotenv';
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { VitePWA } from 'vite-plugin-pwa'
+import { serwist } from '@serwist/vite'
 import { CodeInspectorPlugin } from 'code-inspector-plugin';
 
 dotenv.config();
 
 const backEndPort = parseInt(process.env.BACKEND_PORT || 11966, 10);
 const frontEndPort = parseInt(process.env.FRONTEND_PORT || 18966, 10);
+const nodeModuleChunkGroups = {
+  vendor: ['vue', 'vue-router', 'vue-i18n'],
+  chart: ['chart.js'],
+  speedtest: ['@cloudflare/speedtest'],
+  svgmap: ['svgmap'],
+  'browser-detect': ['@thumbmarkjs/thumbmarkjs', 'detect-gpu', 'ua-parser-js'],
+};
+
+const sourceChunkGroups = {
+  'utils-getips': [
+    '/frontend/utils/getips/index',
+    '/frontend/utils/valid-ip',
+    '/frontend/utils/transform-ip-data',
+    '/frontend/utils/masked-info'
+  ],
+  'utils-data': [
+    '/frontend/utils/country-name',
+    '/frontend/utils/speedtest-colos'
+  ],
+  'utils-auth': [
+    '/frontend/utils/authenticated-fetch'
+  ],
+  'utils-analytics': [
+    '/frontend/utils/use-analytics'
+  ]
+};
+
+function isNodePackage(normalizedId, packageName) {
+  const nodeModulesPath = '/node_modules/';
+  const nodeModulesIndex = normalizedId.lastIndexOf(nodeModulesPath);
+
+  if (nodeModulesIndex === -1) {
+    return false;
+  }
+
+  const packagePath = normalizedId.slice(nodeModulesIndex + nodeModulesPath.length);
+  return packagePath === packageName || packagePath.startsWith(`${packageName}/`);
+}
+
+function manualChunks(id) {
+  const normalizedId = id.replaceAll('\\', '/');
+
+  for (const [chunkName, packages] of Object.entries(nodeModuleChunkGroups)) {
+    if (packages.some((packageName) => isNodePackage(normalizedId, packageName))) {
+      return chunkName;
+    }
+  }
+
+  for (const [chunkName, modules] of Object.entries(sourceChunkGroups)) {
+    if (modules.some((moduleName) => normalizedId.includes(moduleName))) {
+      return chunkName;
+    }
+  }
+
+  return undefined;
+}
 
 export default defineConfig({
   plugins: [
@@ -18,41 +74,14 @@ export default defineConfig({
         }
       }
     }),
-    VitePWA({
-      registerType: 'autoUpdate',
-      injectRegister: 'auto',
-      workbox: {
-        globPatterns: [
-          '**/*.{js,css,html,woff,woff2}',
-          '*.{js,css,html,png,svg,jpg,webp}',
-        ]
-      },
-      manifest: {
-        name: 'IPCheck.ing',
-        short_name: 'IPCheck.ing',
-        theme_color: '#f8f9fa',
-        orientation: "portrait",
-        id: 'com.jasonng.myip',
-        description: 'All in one IP Toolbox',
-        icons: [
-          {
-            src: '/logos/logo-192.webp',
-            sizes: '192x192',
-            type: 'image/webp',
-            purpose: 'maskable'
-          },
-          {
-            src: '/logos/ios-logo-192.png',
-            sizes: '192x192',
-            type: 'image/png',
-          },
-          {
-            src: '/logos/ios-logo-512.png',
-            sizes: '512x512',
-            type: 'image/png',
-          },
-        ],
-      },
+    serwist({
+      swSrc: 'frontend/sw.js',
+      swDest: 'sw.js',
+      globDirectory: 'dist',
+      globPatterns: [
+        '**/*.{js,css,woff,woff2}',
+        '*.{js,css,png,svg,jpg,webp}',
+      ],
     }),
     CodeInspectorPlugin({
       bundler: 'vite',
@@ -70,20 +99,25 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
-            return 'vendor';
-          }
-        },
+        manualChunks,
         assetFileNames: (assetInfo) => {
-          if (assetInfo.name.endsWith('.woff') || assetInfo.name.endsWith('.woff2')) {
+          if (assetInfo.fileName && (assetInfo.fileName.endsWith('.woff') || assetInfo.fileName.endsWith('.woff2'))) {
             return 'fonts/[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },
+        chunkFileNames: (chunkInfo) => {
+          const prefix = chunkInfo.name.startsWith('utils-') ? 'utils/' : '';
+          return `assets/${prefix}[name].[hash].js`;
+        }
       }
     },
     chunkSizeWarningLimit: 1000,
+    splitChunks: {
+      chunks: 'all',
+      minSize: 20000,
+      maxSize: 500000,
+    }
   },
   server: {
     host: '0.0.0.0',

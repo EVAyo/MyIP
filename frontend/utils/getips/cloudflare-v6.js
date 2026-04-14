@@ -1,4 +1,5 @@
 import { isValidIP } from '@/utils/valid-ip.js';
+import { getIPFromMyExternalIP_V6 } from "./myexternalip-v6";
 
 // 从 Cloudflare 获取 IPv6 地址
 const getIPFromCloudflare_V6 = async () => {
@@ -25,11 +26,14 @@ const getIPFromCloudflare_V6 = async () => {
             };
         }
     } catch (error) {
-        return { 
-            ip: null, 
-            source: "Cloudflare IPv6" 
-        };
+        console.error("Error fetching IP from Cloudflare:", error);
     }
+    // 故障转移
+    const { ip, source } = await getIPFromMyExternalIP_V6();
+    return {
+        ip: ip,
+        source: source
+    };
 };
 
 export { getIPFromCloudflare_V6 };
